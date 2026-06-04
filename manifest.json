@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "AI Repo Detector",
+  "version": "0.3.0",
+  "description": "Эвристический детектор AI-сгенерированных репозиториев GitHub. Без использования ИИ.",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://api.github.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://github.com/*"],
+      "js": ["src/content/content.js"],
+      "css": ["src/content/badge.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "service_worker": "src/background/service-worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "src/popup/popup.html",
+    "default_title": "AI Repo Detector",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

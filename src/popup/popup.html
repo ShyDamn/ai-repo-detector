@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <h1>AI Repo Detector</h1>
+  <p class="hint">
+    Расширение работает анонимно (60 запросов GitHub API в час).
+    Чтобы поднять лимит до 5000 — вставь GitHub Personal Access Token с правом <code>public_repo</code>.
+  </p>
+  <input type="password" id="token" placeholder="ghp_…" autocomplete="off" />
+  <div class="row">
+    <button id="save">Сохранить</button>
+    <button id="clear" class="secondary">Очистить</button>
+  </div>
+  <div id="status"></div>
+  <hr>
+  <p class="meta">
+    <a href="https://github.com/settings/tokens?type=beta" target="_blank">Создать токен</a>
+  </p>
+  <script src="popup.js"></script>
+</body>
+</html>
