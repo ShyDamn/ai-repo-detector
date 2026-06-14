@@ -77,6 +77,10 @@ function renderResult(result) {
     `;
   }).join('');
 
+  const notesHtml = (result.notes || []).length
+    ? `<div class="aird-notes">${result.notes.map(n => `<div class="aird-note">${escapeHtml(n)}</div>`).join('')}</div>`
+    : '';
+
   panel.innerHTML = `
     <header class="aird-panel-head">
       <h3>AI Repo Detector</h3>
@@ -86,6 +90,7 @@ function renderResult(result) {
       <div class="aird-summary-score">${result.overall}<span>/100</span></div>
       <div class="aird-summary-label">${result.verdict.emoji} ${result.verdict.label}</div>
     </div>
+    ${notesHtml}
     ${categoryHtml}
     <footer class="aird-foot">
       Эвристический анализ. Может ошибаться. ${result.meta.commitsAnalyzed} коммитов проанализировано.

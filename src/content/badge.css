@@ -116,6 +116,21 @@
   font-weight: 600;
 }
 
+.aird-notes {
+  padding: 10px 16px;
+  background: #fff8c5;
+  border-bottom: 1px solid #d4a72c;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #5d3a00;
+}
+.aird-note {
+  margin: 0;
+}
+.aird-note + .aird-note {
+  margin-top: 6px;
+}
+
 .aird-category {
   padding: 12px 16px;
   border-bottom: 1px solid #d8dee4;
@@ -192,4 +207,9 @@
   .aird-category li + li { border-top-color: #21262d; }
   .aird-foot { background: #161b22; }
   .aird-close { color: #8b949e; }
+  .aird-notes {
+    background: #2d2308;
+    border-bottom-color: #9e6a03;
+    color: #e6cea1;
+  }
 }

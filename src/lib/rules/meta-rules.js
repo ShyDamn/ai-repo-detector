@@ -29,23 +29,25 @@ export const metaRules = [
   {
     id: 'orphan_repo',
     weight: 0.3,
-    description: 'Нет fork-предка, нет topics, нет описания — abandoned-look',
+    description: 'Нет description — abandoned-look (homepage и topics убраны из проверки как малоинформативные)',
     score(ctx) {
       const repo = ctx.repo;
       if (!repo) return 0;
-      let signals = 0;
-      if (!repo.description || repo.description.length < 20) signals++;
-      if (!repo.topics || repo.topics.length === 0) signals++;
-      if (!repo.homepage) signals++;
-      return signals / 3 * 0.5; // слабый сигнал сам по себе
+      // По фидбеку: отсутствие homepage слабо коррелирует с AI — у маленьких
+      // human-проектов homepage чаще нет. Topics тоже часто пусты у легитимных
+      // репо (даже cpython). Оставляем только description.
+      const noDesc = !repo.description || repo.description.length < 20;
+      if (!noDesc) return 0;
+      // Без description + молодой репо = слабый сигнал. Старый — ещё слабее.
+      const age = ctx.repoAgeDays;
+      if (age < 30)  return 0.5;
+      if (age < 180) return 0.3;
+      return 0.15;
     },
     reason: (ctx) => {
       const r = ctx.repo || {};
-      const missing = [];
-      if (!r.description || r.description.length < 20) missing.push('description');
-      if (!r.topics?.length) missing.push('topics');
-      if (!r.homepage) missing.push('homepage');
-      return missing.length ? `Отсутствует: ${missing.join(', ')}` : '';
+      const noDesc = !r.description || r.description.length < 20;
+      return noDesc ? `Нет внятного description (возраст ${ctx.repoAgeDays}д)` : '';
     },
   },
 

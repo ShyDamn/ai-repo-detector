@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AI Repo Detector",
-  "version": "0.3.0",
+  "version": "0.4.1",
   "description": "Эвристический детектор AI-сгенерированных репозиториев GitHub. Без использования ИИ.",
   "permissions": ["storage"],
   "host_permissions": [

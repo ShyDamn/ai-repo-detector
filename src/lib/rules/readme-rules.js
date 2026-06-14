@@ -4,14 +4,30 @@
 // score() возвращает [0..1], где 1 = сильный AI-сигнал.
 // Веса нормируются позже в scorer.js.
 
+// Age-decay: старый репо с template-структурой ≠ AI. Возможно, человек
+// просто заботливо обновлял README годами. Применяется к "поверхностным"
+// сигналам — каноничной структуре, эмодзи, multi-lang и т.п.
+function ageDecay(ctx) {
+  const age = ctx.repoAgeDays || 0;
+  if (age > 3 * 365) return 0.25;
+  if (age > 2 * 365) return 0.45;
+  if (age > 365)     return 0.65;
+  if (age > 180)     return 0.85;
+  return 1.0;
+}
+
 const AI_PHRASES_EN = [
+  // Specific LLM tells — оставляем только то, что почти не используется людьми
   'comprehensive', 'seamlessly', 'leverage', 'robust', 'cutting-edge',
-  'state-of-the-art', 'elegant', 'powerful', 'intuitive', 'streamline',
+  'state-of-the-art', 'elegant', 'intuitive', 'streamline',
   'empower', 'unlock', 'harness', 'effortlessly', 'meticulously',
   'in the realm of', 'navigate the complexities', 'delve into',
-  'a testament to', 'pivotal', 'paramount', 'underscore',
+  'a testament to', 'underscore',
   'this project aims to', 'designed to provide', 'built with the goal of',
   'whether you are', 'this repository contains',
+  // 'powerful', 'modern' — убраны: дублируются с hyperbolic_opening и часто
+  // встречаются в честных тех-описаниях ("powerful API", "modern UI")
+  // 'pivotal', 'paramount' — убраны: редко в реальном LLM-output, шумные
 ];
 
 // AI на русском: компактный словарь только специфичных LLM-формулировок.
@@ -50,7 +66,7 @@ export const readmeRules = [
       // До 4 эмодзи-заголовков — нормально для русскоязычного README.
       // Сигнал начинается с 5+.
       if (n < 5) return 0;
-      return Math.min(1, (n - 4) / 5);
+      return Math.min(1, (n - 4) / 5) * ageDecay(ctx);
     },
     reason: (ctx) => {
       const n = (ctx.readme.match(EMOJI_HEADER_PATTERN) || []).length;
@@ -128,7 +144,8 @@ export const readmeRules = [
       const isYoung = ctx.repoAgeDays < 14;
       // Считаем 4/6 как полную каноничную структуру; >4 → 1.0
       const base = Math.min(1, found / 4);
-      return isYoung ? Math.min(1, base * 1.4) : base * 0.6;
+      const young = isYoung ? Math.min(1, base * 1.4) : base * 0.6;
+      return young * ageDecay(ctx);
     },
     reason: (ctx) => {
       const r = ctx.readme.toLowerCase();
@@ -171,24 +188,65 @@ export const readmeRules = [
   },
 
   {
+    id: 'inline_feature_bullets',
+    weight: 0.7,
+    description: '✅/🚀/⭐ галочки и эмодзи в начале параграфов (не в таблице) — AI feature highlights',
+    score(ctx) {
+      const r = ctx.readme;
+      // Считаем строки, начинающиеся с галочки/эмодзи (вне таблиц).
+      // ✅ / ❌ / 🚀 / ⭐ / 🎯 / 💡 / 🔍 — типичные AI "feature highlights"
+      const lines = r.split('\n');
+      let bulletLines = 0;
+      for (const l of lines) {
+        // skip строки таблиц (с |) и кодоблоки
+        if (l.includes('|')) continue;
+        // markdown bullet с эмодзи в начале содержимого: "- ✅ ..." тоже считается
+        if (/^\s*(?:[-*]\s+)?[✅❌🚀⭐🎯💡🔍✨🎉]\s+\w/u.test(l)) bulletLines++;
+      }
+      if (bulletLines >= 6) return 1;
+      if (bulletLines >= 4) return 0.7;
+      if (bulletLines >= 2) return 0.3;
+      return 0;
+    },
+    reason(ctx) {
+      const lines = ctx.readme.split('\n');
+      let n = 0;
+      for (const l of lines) {
+        if (l.includes('|')) continue;
+        if (/^\s*(?:[-*]\s+)?[✅❌🚀⭐🎯💡🔍✨🎉]\s+\w/u.test(l)) n++;
+      }
+      return n >= 2 ? `${n} параграфов с emoji-галочками` : '';
+    },
+  },
+
+  {
     id: 'hyperbolic_opening',
     weight: 0.9,
-    description: 'Гиперболическое вступление',
+    description: 'Маркетинговое вступление — гиперболические эпитеты и прямые обращения к читателю',
     score(ctx) {
-      const opening = ctx.readme.slice(0, 600).toLowerCase();
+      // Расширили scope с 600 до 2500 chars: AI часто начинает README с logo+badges,
+      // а сам маркетинговый текст идёт после.
+      const opening = ctx.readme.slice(0, 2500).toLowerCase();
       const tells = [
+        // Эпитеты
         'revolutionary', 'game-changing', 'cutting-edge', 'next-generation',
         'powerful', 'modern', 'beautiful', 'lightning-fast', 'blazingly fast',
-        'enterprise-grade', 'production-ready',
+        'enterprise-grade', 'production-ready', 'best-in-class', 'world-class',
+        // Маркетинговые приёмы и обращения
+        'tired of', 'imagine having', 'imagine if', 'just say', 'no problem!',
+        'love at first sight', 'fall in love', "you'll love", 'you will love',
+        'simple yet powerful', 'for beginners', 'in just a',
+        'meet the', 'meet our', 'introducing',
+        "you'll get", 'you get a whole world',
+        "let's", 'why settle',
       ];
-      const hits = tells.filter(t => opening.includes(t)).length;
-      return Math.min(1, hits / 3);
+      const found = tells.filter(t => opening.includes(t));
+      ctx._hyperbolicFound = found;
+      return Math.min(1, found.length / 3);
     },
     reason: (ctx) => {
-      const opening = ctx.readme.slice(0, 600).toLowerCase();
-      const found = ['revolutionary','cutting-edge','blazingly fast','production-ready','lightning-fast']
-        .filter(t => opening.includes(t));
-      return found.length ? `Маркетинговые эпитеты во вступлении: ${found.join(', ')}` : '';
+      const found = ctx._hyperbolicFound || [];
+      return found.length ? `Маркетинговые tells: ${found.slice(0, 6).join(', ')}${found.length > 6 ? '…' : ''}` : '';
     },
   },
 
@@ -209,6 +267,9 @@ export const readmeRules = [
       // Убираем явно невалидные коды (не язык)
       const blacklist = new Set(['md', 'old', 'tmp', 'bak', 'dev', 'src', 'lib']);
       for (const c of blacklist) codes.delete(c);
+      // Multi-lang README — AI-специфичный паттерн независимо от возраста.
+      // Люди обычно один раз пишут README и не добавляют переводы спустя
+      // годы; AI же делает это вместе с самим READMЕ.
       if (codes.size >= 10) return 1;
       if (codes.size >= 5)  return 0.8;
       if (codes.size >= 3)  return 0.4;
@@ -232,7 +293,8 @@ export const readmeRules = [
     score(ctx) {
       const opening = ctx.readme.slice(0, 2500);
       const matches = (opening.match(/!\[[^\]]*\]\(https:\/\/img\.shields\.io\//gi) || []).length;
-      // 3-5 — норма (CI/coverage/version); 7+ — украшательство в AI-стиле
+      // 3-5 — норма (CI/coverage/version); 7+ — украшательство в AI-стиле.
+      // Без age-decay: AI любит badges независимо от возраста проекта.
       if (matches >= 8) return 1;
       if (matches >= 6) return 0.6;
       if (matches >= 4) return 0.25;

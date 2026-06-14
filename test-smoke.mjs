@@ -379,6 +379,286 @@ cases.push(
   { name: 'synapsea-auth-react-style (5 commits, TS SDK)',        ctx: synapseaSdk,  expectProfile: ['ai_code', 'ai_full'] },
 );
 
+// ─── ИЗ ФИДБЕКА К СТАТЬЕ ───────────────────────────────────────────────────
+
+// Кейс 7: ilyachch/django-rest-framework-rusdoc — 9 лет, 98-99% руками,
+// с github-actions[bot] и automated PRs. Сейчас даёт 19/100 — это OK, но
+// в reason'е "AI-коммиттеры: github-actions[bot]" и "Преждевременный
+// devops/tooling-обвес у молодого репо" — оба сообщения некорректны.
+const djangoRusdoc = {
+  repo: {
+    size: 1200,
+    stargazers_count: 80,
+    open_issues_count: 5,
+    description: 'Russian translation of Django REST Framework documentation',
+    topics: [],  // пусто
+    homepage: '',  // пусто
+    created_at: new Date(Date.now() - 9 * 365 * 86400 * 1000).toISOString(),
+  },
+  readme: [
+    '# Django REST framework на русском',
+    '',
+    'Перевод документации Django REST Framework.',
+    '',
+    '## Установка',
+    '```bash',
+    'pip install -r requirements.txt',
+    '```',
+    '',
+    '## Сборка',
+    'mkdocs build',
+    '',
+    '## Лицензия',
+    'MIT',
+  ].join('\n'),
+  commits: [
+    // 25 человеческих коммитов
+    ...Array.from({ length: 25 }, (_, i) => mkCommit({
+      msg: i % 3 === 0 ? `обновлён перевод ${i}` : i % 3 === 1 ? `fix typos ${i}` : `merge PR #${i + 100}`,
+      name: 'ilyachch',
+      date: new Date(2020 + Math.floor(i / 10), i % 12, 1 + (i % 28)).toISOString(),
+    })),
+    // 5 коммитов от github-actions[bot] — автоматические dependency bumps
+    ...Array.from({ length: 5 }, (_, i) => mkCommit({
+      msg: `chore(deps): bump some-package from 1.${i}.0 to 1.${i + 1}.0`,
+      name: 'github-actions[bot]',
+      email: '41898282+github-actions[bot]@users.noreply.github.com',
+      date: new Date(2024, i, 15).toISOString(),
+    })),
+  ],
+  totalCommits: 350,
+  pullRequestsCount: 80,
+  rootTree: [
+    { path: 'docs', type: 'tree' },
+    { path: '.github', type: 'tree' },
+    { path: '.editorconfig', type: 'blob' },
+    { path: '.gitignore', type: 'blob' },
+    { path: 'mkdocs.yml', type: 'blob' },
+    { path: 'requirements.txt', type: 'blob' },
+    { path: 'README.md', type: 'blob' },
+    { path: 'LICENSE', type: 'blob' },
+  ],
+  repoAgeDays: 9 * 365,
+};
+
+// Кейс 8: ilyachch/github-actions-version-check — 80% AI, сейчас даёт 21/100
+// (false negative). Хочу видеть AI signals.
+const ghaVersionCheck = {
+  repo: {
+    size: 150,
+    stargazers_count: 5,
+    open_issues_count: 0,
+    description: 'Check that GitHub Actions versions are up-to-date',
+    topics: ['github-actions', 'cli'],
+    homepage: '',
+    created_at: new Date(Date.now() - 200 * 86400 * 1000).toISOString(),
+  },
+  readme: [
+    '# 🚀 GitHub Actions Version Check',
+    '',
+    '> A powerful, modern CLI to check that your GitHub Actions are up-to-date',
+    '',
+    '## ✨ Features',
+    '- 🔍 Scan workflows',
+    '- 📊 Compare with latest releases',
+    '- ⚡ Fast and lightweight',
+    '',
+    '## 📦 Installation',
+    '```bash',
+    'pip install gha-version-check',
+    '```',
+    '',
+    '## 🎯 Usage',
+    '```bash',
+    'gha-version-check .github/workflows',
+    '```',
+    '',
+    '## 🛠 Development',
+    '',
+    '## 📜 License',
+    'MIT',
+  ].join('\n'),
+  commits: (() => {
+    // GitHub API возвращает коммиты newest-first, поэтому initial commit
+    // оказывается в КОНЦЕ массива (последний индекс).
+    const arr = Array.from({ length: 12 }, (_, i) => mkCommit({
+      msg: `feat: ${['add tests', 'refactor scanner', 'improve cli', 'fix edge case'][i % 4]} ${i}`,
+      name: 'ilyachch',
+      date: new Date(2024, Math.floor(i / 4), 1 + i).toISOString(),
+    }));
+    // Последний (самый старый) — initial commit с scaffold marker
+    arr[arr.length - 1] = mkCommit({
+      msg: 'feat: initial implementation\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)',
+      name: 'ilyachch',
+      date: new Date(2024, 0, 1).toISOString(),
+    });
+    return arr;
+  })(),
+  totalCommits: 12,
+  pullRequestsCount: 2,
+  rootTree: [
+    { path: 'src', type: 'tree' },
+    { path: 'tests', type: 'tree' },
+    { path: '.github', type: 'tree' },
+    { path: 'README.md', type: 'blob' },
+    { path: 'pyproject.toml', type: 'blob' },
+    { path: 'LICENSE', type: 'blob' },
+    { path: '.gitignore', type: 'blob' },
+  ],
+  repoAgeDays: 200,
+};
+
+// Кейс 9: boson-php/boson — full human, активный PHP проект
+// (синтетическая модель — реальные числа неизвестны).
+const bosonPhp = {
+  repo: {
+    size: 600,
+    stargazers_count: 250,
+    open_issues_count: 8,
+    description: 'PHP application runtime built on top of CEF and Saucer',
+    topics: ['php', 'desktop', 'cef'],
+    homepage: 'https://bosonphp.com',
+    created_at: new Date(Date.now() - 400 * 86400 * 1000).toISOString(),
+  },
+  readme: [
+    '# Boson — PHP Desktop Runtime',
+    '',
+    'Boson lets you build cross-platform desktop applications using PHP.',
+    'It uses CEF and Saucer under the hood.',
+    '',
+    '## Installation',
+    '```bash',
+    'composer require boson-php/boson',
+    '```',
+    '',
+    '## Quick example',
+    '```php',
+    '<?php',
+    '$app = new Boson\\Application();',
+    '$app->run();',
+    '```',
+    '',
+    '## Documentation',
+    'See https://bosonphp.com',
+  ].join('\n'),
+  commits: Array.from({ length: 30 }, (_, i) => mkCommit({
+    msg: i % 4 === 0 ? `Add support for ${['windows', 'macos', 'linux'][i % 3]} build` :
+         i % 4 === 1 ? `fix(runtime): handle ${['null', 'empty', 'utf-8'][i % 3]} case` :
+         i % 4 === 2 ? `wip: working on IPC` :
+                       `cleanup`,
+    name: 'nesk',
+    date: new Date(2025, 4 + Math.floor(i / 4), 1 + (i % 28)).toISOString(),
+  })),
+  totalCommits: 200,
+  pullRequestsCount: 30,
+  rootTree: [
+    { path: 'src', type: 'tree' },
+    { path: 'tests', type: 'tree' },
+    { path: 'examples', type: 'tree' },
+    { path: '.github', type: 'tree' },
+    { path: 'composer.json', type: 'blob' },
+    { path: 'README.md', type: 'blob' },
+    { path: 'LICENSE', type: 'blob' },
+    { path: '.gitignore', type: 'blob' },
+    { path: '.editorconfig', type: 'blob' },
+  ],
+  repoAgeDays: 400,
+};
+
+// Кейс 10: moonshine-software/moonshine — AI пишет почти все задачи.
+// Скорее всего: активный проект (несколько лет), polished README,
+// много контрибьюторов, но коммиты-агенты должны где-то светиться.
+const moonshine = {
+  repo: {
+    size: 3500,
+    stargazers_count: 1800,
+    open_issues_count: 25,
+    description: 'Laravel admin panel framework',
+    topics: ['laravel', 'admin-panel', 'php'],
+    homepage: 'https://moonshine-laravel.com',
+    created_at: new Date(Date.now() - 700 * 86400 * 1000).toISOString(),
+  },
+  readme: [
+    '# 🌙 MoonShine — Laravel Admin Panel',
+    '',
+    '[![Latest Stable Version](https://img.shields.io/packagist/v/moonshine/moonshine)](#)',
+    '[![Total Downloads](https://img.shields.io/packagist/dt/moonshine/moonshine)](#)',
+    '[![License](https://img.shields.io/packagist/l/moonshine/moonshine)](#)',
+    '[![Tests](https://img.shields.io/github/actions/workflow/status/moonshine-software/moonshine/tests.yml)](#)',
+    '',
+    '> Powerful and elegant Laravel admin panel framework',
+    '',
+    '## ✨ Features',
+    '## 🚀 Installation',
+    '## 📖 Usage',
+    '## 🤝 Contributing',
+    '## 📜 License',
+  ].join('\n'),
+  commits: [
+    // Часть с AI-trailers (моделируем "AI пишет задачи")
+    ...Array.from({ length: 10 }, (_, i) => mkCommit({
+      msg: `feat: add new field type ${i}\n\nCo-Authored-By: Claude <noreply@anthropic.com>`,
+      name: 'lee-to',
+      date: new Date(2025, 6 + Math.floor(i / 3), 1 + (i % 28)).toISOString(),
+    })),
+    // Часть чистых
+    ...Array.from({ length: 15 }, (_, i) => mkCommit({
+      msg: i % 2 === 0 ? `fix: bug ${i}` : `update docs ${i}`,
+      name: 'lee-to',
+      date: new Date(2025, 6 + Math.floor(i / 5), 1 + (i % 28)).toISOString(),
+    })),
+  ],
+  totalCommits: 2500,
+  pullRequestsCount: 400,
+  rootTree: [
+    { path: 'src', type: 'tree' },
+    { path: 'tests', type: 'tree' },
+    { path: '.github', type: 'tree' },
+    { path: 'composer.json', type: 'blob' },
+    { path: 'README.md', type: 'blob' },
+    { path: 'LICENSE', type: 'blob' },
+  ],
+  repoAgeDays: 700,
+};
+
+// Кейс 11: squash-merge workflow — 3 commits, 50 PRs, активный проект.
+// Иммитирует комментарий Void-Cowboy: команды squash'ат feature-ветки.
+const squashMergeRepo = {
+  repo: {
+    size: 1500,
+    stargazers_count: 500,
+    open_issues_count: 15,
+    description: 'High-performance event bus for distributed systems',
+    topics: ['events', 'distributed'],
+    homepage: '',
+    created_at: new Date(Date.now() - 300 * 86400 * 1000).toISOString(),
+  },
+  readme: '# EventBus\n\nDistributed event bus.\n\n## Install\n```\nnpm i eventbus\n```\n',
+  commits: [
+    mkCommit({ msg: 'v0.3.0 release (#142)', name: 'maintainer', date: '2026-03-01' }),
+    mkCommit({ msg: 'v0.2.0 release (#98)',  name: 'maintainer', date: '2025-12-01' }),
+    mkCommit({ msg: 'v0.1.0 release (#52)',  name: 'maintainer', date: '2025-09-01' }),
+  ],
+  totalCommits: 3,
+  pullRequestsCount: 142,  // высокий PR count → squash-merge
+  rootTree: [
+    { path: 'src', type: 'tree' },
+    { path: 'tests', type: 'tree' },
+    { path: 'package.json', type: 'blob' },
+    { path: 'README.md', type: 'blob' },
+    { path: 'LICENSE', type: 'blob' },
+  ],
+  repoAgeDays: 300,
+};
+
+cases.push(
+  { name: 'django-rest-framework-rusdoc (9y, human, gh-actions bot)',  ctx: djangoRusdoc,    expectProfile: [null] },
+  { name: 'github-actions-version-check (Claude Code marker)',         ctx: ghaVersionCheck, expectProfile: ['ai_code', 'ai_full'] },
+  { name: 'boson-php/boson (full human, active)',                      ctx: bosonPhp,        expectProfile: [null] },
+  { name: 'moonshine (AI does most tasks, 40% trailers)',              ctx: moonshine,       expectProfile: ['ai_code', 'ai_full'] },
+  { name: 'squash-merge workflow (3 commits, 142 PRs)',                ctx: squashMergeRepo, expectProfile: [null] },
+);
+
 let pass = 0, fail = 0;
 for (const c of cases) {
   const result = analyze(c.ctx);

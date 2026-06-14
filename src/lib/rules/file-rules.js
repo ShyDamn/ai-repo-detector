@@ -7,26 +7,28 @@ export const fileRules = [
   {
     id: 'over_engineered_skeleton',
     weight: 1.1,
-    description: 'Преждевременный devops/tooling-обвес у молодого репо',
+    description: 'Преждевременный devops/tooling-обвес (CI templates, husky, pre-commit, security policies)',
     score(ctx) {
       const tree = ctx.rootTree || [];
       const names = new Set(tree.map(e => e.path));
 
-      // Расширенный список — включает то, что AI любит насовать сразу
+      // Tooling-список без УНИВЕРСАЛЬНЫХ файлов: .editorconfig, .gitignore,
+      // базовый tsconfig.json и .prettierrc сами по себе не AI-сигнал —
+      // их копипастят все. Оставляем то, что реально требует усилий
+      // и встречается у AI-vibe-coded репо чаще, чем у людей.
       const tooling = [
         '.github/workflows', '.github/dependabot.yml', '.github/ISSUE_TEMPLATE',
         '.github/PULL_REQUEST_TEMPLATE.md', '.github/CODEOWNERS',
-        '.editorconfig', '.prettierrc', '.eslintrc.json', 'eslint.config.ts',
-        '.eslintrc.js', '.husky', '.pre-commit-config.yaml',
+        '.husky', '.pre-commit-config.yaml',
         'CODE_OF_CONDUCT.md', 'CONTRIBUTING.md', 'SECURITY.md',
         'playwright.config.ts', 'vitest.config.ts', 'jest.config.js',
-        'tsconfig.json', 'tsconfig.node.json',
+        'eslint.config.ts', 'eslint.config.js',
+        'commitlint.config.js', 'release.config.js',
       ];
       const present = tooling.filter(a =>
         [...names].some(n => n === a || n.startsWith(a + '/'))
       );
 
-      // Подсчёт инфраструктуры в корне: Dockerfile*, docker-compose*, nginx.conf
       const infraFiles = [...names].filter(n =>
         /^Dockerfile/i.test(n) ||
         /^docker-compose.*\.ya?ml$/i.test(n) ||
@@ -37,11 +39,19 @@ export const fileRules = [
       const noSocial = (ctx.repo?.open_issues_count || 0) === 0 && (ctx.pullRequestsCount || 0) === 0;
 
       // 4+ Dockerfile/compose у одиночки — почти всегда AI ("давай я добавлю все варианты")
-      if (infraFiles.length >= 4) return Math.min(1, 0.6 + present.length * 0.1);
-      // 6+ tooling-артефактов у репо <60д без issues
-      if (isYoung && present.length >= 6 && noSocial) return 1;
-      if (present.length >= 4 && isYoung) return 0.7;
-      return Math.min(0.5, (present.length + infraFiles.length) / 12);
+      let base = 0;
+      if (infraFiles.length >= 4) base = Math.min(1, 0.6 + present.length * 0.1);
+      else if (isYoung && present.length >= 6 && noSocial) base = 1;
+      else if (present.length >= 4 && isYoung) base = 0.7;
+      else if (present.length >= 6) base = 0.4;  // много tooling, но репо не молодой — мягче
+      else base = Math.min(0.3, (present.length + infraFiles.length) / 15);
+
+      // Hard age-decay: старый репо не может быть «преждевременно» обвешан
+      const age = ctx.repoAgeDays;
+      if (age > 3 * 365) return base * 0.1;
+      if (age > 365)     return base * 0.35;
+      if (age > 180)     return base * 0.65;
+      return base;
     },
     reason: (ctx) => {
       const tree = ctx.rootTree || [];
@@ -49,12 +59,16 @@ export const fileRules = [
       const infra = names.filter(n =>
         /^Dockerfile/i.test(n) || /^docker-compose.*\.ya?ml$/i.test(n) || n === 'nginx.conf'
       );
-      const tools = ['eslint.config.ts', '.prettierrc', 'playwright.config.ts', 'tsconfig.json',
-                     'CODE_OF_CONDUCT.md', 'SECURITY.md', 'CONTRIBUTING.md', '.editorconfig']
-        .filter(t => names.includes(t));
+      const tools = ['.husky', '.pre-commit-config.yaml', 'eslint.config.ts',
+                     'playwright.config.ts', 'vitest.config.ts',
+                     'CODE_OF_CONDUCT.md', 'SECURITY.md', 'CONTRIBUTING.md',
+                     '.github/dependabot.yml', '.github/CODEOWNERS']
+        .filter(t => names.includes(t) || names.some(n => n.startsWith(t + '/')));
       const parts = [];
       if (infra.length) parts.push(`infra: ${infra.length} файла`);
       if (tools.length) parts.push(`tooling: ${tools.join(', ')}`);
+      const age = ctx.repoAgeDays;
+      if (age > 365 && parts.length) parts.push(`(возраст ${Math.floor(age / 365)}y, сигнал ослаблен)`);
       return parts.join(' · ');
     },
   },
@@ -127,21 +141,47 @@ export const fileRules = [
   {
     id: 'polished_oneshot_sdk',
     weight: 1.0,
-    description: 'Polished SDK: pkg manifest + LICENSE + tsconfig + мало коммитов + соло-автор',
+    description: 'Polished one-shot SDK/проект: pkg manifest + LICENSE + tooling + мало коммитов + соло',
     score(ctx) {
       const tree = ctx.rootTree || [];
       const names = new Set(tree.map(e => e.path));
       const commits = ctx.commits || [];
       const total = ctx.totalCommits ?? commits.length;
 
-      const hasManifest = ['package.json', 'pyproject.toml', 'setup.py', 'Cargo.toml', 'go.mod']
+      const hasManifest = ['package.json', 'pyproject.toml', 'setup.py', 'Cargo.toml', 'go.mod',
+                           'composer.json', 'Gemfile']
         .some(n => names.has(n));
-      const hasLicense = ['LICENSE', 'LICENSE.md', 'LICENCE'].some(n => names.has(n));
-      const hasTooling = ['tsconfig.json', '.prettierrc', 'eslint.config.ts', '.eslintrc.json']
+      const hasLicense = ['LICENSE', 'LICENSE.md', 'LICENSE.txt', 'LICENCE', 'COPYING']
         .some(n => names.has(n));
+      // Tool링ом считаем что угодно показывающее, что репо "профессионально оформлен".
+      // Кросс-стек: JS/TS + Python + Rust + Go.
+      const toolingMarkers = [
+        // JS/TS
+        'tsconfig.json', '.prettierrc', '.prettierrc.json', 'eslint.config.ts', 'eslint.config.js',
+        '.eslintrc.json', '.eslintrc.js', 'vite.config.ts', 'vitest.config.ts',
+        // Python
+        '.pre-commit-config.yaml', 'tox.ini', 'pytest.ini', 'mypy.ini', 'ruff.toml',
+        'setup.cfg', 'uv.lock', '.python-version', 'poetry.lock',
+        // Rust
+        'Cargo.lock', 'rustfmt.toml', 'clippy.toml',
+        // Go
+        'go.sum', 'Makefile',
+        // PHP
+        'phpunit.xml', 'phpstan.neon', '.php-cs-fixer.dist.php',
+      ];
+      const toolingCount = toolingMarkers.filter(n => names.has(n)).length;
+      const hasTooling = toolingCount >= 1;
 
-      const authors = new Set(commits.map(c => c.commit?.author?.email).filter(Boolean));
-      const solo = authors.size === 1;
+      // Solo — по уникальным NAMES (а не email), потому что один человек
+      // часто имеет несколько email-алиасов (noreply, личный, рабочий).
+      // Игнорируем "root", "user", "admin", "Default User" — типичный artifact
+      // Docker-контейнера/CI/dev-окружения, где AI делал initial commit.
+      const IGNORE_NAMES = /^(root|user|admin|default user|github|ubuntu|builder)$/i;
+      const authorNames = new Set(
+        commits.map(c => c.commit?.author?.name)
+          .filter(n => n && !IGNORE_NAMES.test(n.trim()))
+      );
+      const solo = authorNames.size === 1;
 
       // Признаки "вылизанного" пакетного репо
       const hasReadmeAndApi = /^#{1,3}[^\S\n][^\n]{0,8}?(api|api reference)\b/im.test(ctx.readme || '');
@@ -149,7 +189,9 @@ export const fileRules = [
       // SDK-форма + мало коммитов + соло + tooling = почти всегда AI vibe-coded SDK
       if (hasManifest && hasLicense && hasTooling && solo && total > 0 && total <= 8) return 1;
       if (hasManifest && hasLicense && solo && total > 0 && total <= 5 && hasReadmeAndApi) return 0.85;
-      if (hasManifest && hasTooling && solo && total > 0 && total <= 8) return 0.5;
+      if (hasManifest && hasTooling && solo && total > 0 && total <= 8) return 0.65;
+      // Без LICENSE, но с manifest+tooling и совсем мало коммитов
+      if (hasManifest && hasTooling && solo && total > 0 && total <= 10 && toolingCount >= 2) return 0.5;
       return 0;
     },
     reason(ctx) {
@@ -157,13 +199,15 @@ export const fileRules = [
       const names = new Set(tree.map(e => e.path));
       const commits = ctx.commits || [];
       const total = ctx.totalCommits ?? commits.length;
-      const authors = new Set(commits.map(c => c.commit?.author?.email).filter(Boolean));
+      const authorNames = new Set(commits.map(c => c.commit?.author?.name).filter(Boolean));
       const parts = [];
-      if (['package.json','pyproject.toml','setup.py','Cargo.toml'].some(n => names.has(n))) parts.push('package');
-      if (['LICENSE','LICENSE.md'].some(n => names.has(n))) parts.push('LICENSE');
-      if (['tsconfig.json','.prettierrc'].some(n => names.has(n))) parts.push('tooling');
+      if (['package.json','pyproject.toml','setup.py','Cargo.toml','composer.json','go.mod','Gemfile'].some(n => names.has(n))) parts.push('manifest');
+      if (['LICENSE','LICENSE.md','LICENSE.txt','LICENCE','COPYING'].some(n => names.has(n))) parts.push('LICENSE');
+      const toolingMarkers = ['tsconfig.json','.prettierrc','eslint.config.ts','.pre-commit-config.yaml','uv.lock','Cargo.lock','phpstan.neon','vite.config.ts','playwright.config.ts'];
+      const foundTools = toolingMarkers.filter(t => names.has(t));
+      if (foundTools.length) parts.push(`tooling: ${foundTools.slice(0, 3).join(',')}`);
       parts.push(`${total} commit${total === 1 ? '' : 's'}`);
-      parts.push(`${authors.size} author${authors.size === 1 ? '' : 's'}`);
+      parts.push(`${authorNames.size} author${authorNames.size === 1 ? '' : 's'}`);
       return parts.join(' · ');
     },
   },

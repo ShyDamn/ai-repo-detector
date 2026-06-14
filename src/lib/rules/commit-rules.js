@@ -2,16 +2,61 @@
 //
 // Forensics по истории коммитов. Анализируем cadence, авторов, размер initial commit.
 
-const AI_COMMITTER_PATTERNS = [
-  /^claude/i,
-  /^cursor/i,
-  /^aider/i,
-  /^devin/i,
-  /^codex/i,
-  /\[bot\]$/,
-  /github-copilot/i,
-  /openhands/i,
+// Имена, которые подозрительны САМИ ПО СЕБЕ — встречаются только как
+// AI-агенты, реальные люди и CI-боты с такими именами не коммитят.
+const AI_BOT_NAME_PATTERNS = [
+  /^github-copilot(\[bot\])?$/i,
+  /^cursor[-_]?bot$/i,
+  /^aider(\[bot\])?$/i,
+  /^devin(-ai)?(\[bot\])?$/i,
+  /^codex(\[bot\])?$/i,
+  /^openhands(\[bot\])?$/i,
+  /^all-?hands(\[bot\])?$/i,
+  /^claude(-code)?(\[bot\])?$/i,  // имя Claude само по себе требует подтверждения email — см. ниже
 ];
+
+// Имена, которые могут указывать на AI, но также — на реальных людей
+// (Claude — реальное имя!) или CI-ботов. Триггерим только если рядом
+// AI-специфичный email или явный [bot]-суффикс.
+const AI_NAME_NEEDS_EMAIL = [
+  { name: /^claude\b/i, mustEmail: /(@anthropic\.com|claude.*@|@claude\.ai)/i },
+  { name: /^cursor\b/i, mustEmail: /(@cursor\.(com|sh)|cursor.*@)/i },
+];
+
+// CI-боты которые НИКОГДА не должны триггерить ai_committer.
+// Имея этот список явно, проще объяснить почему репо human.
+const CI_BOT_BLACKLIST = [
+  /^github-actions(\[bot\])?$/i,
+  /^dependabot(\[bot\])?$/i,
+  /^renovate(\[bot\])?$/i,
+  /^renovate-bot$/i,
+  /^pre-commit-ci(\[bot\])?$/i,
+  /^mergify(\[bot\])?$/i,
+  /^codecov(\[bot\])?$/i,
+  /^stale(\[bot\])?$/i,
+  /^semantic-release-bot$/i,
+  /^allcontributors(\[bot\])?$/i,
+  /^imgbot(\[bot\])?$/i,
+  /^snyk-bot$/i,
+  /^web-flow$/i,  // GitHub squash-merge bot
+];
+
+function isCiBot(name) {
+  return CI_BOT_BLACKLIST.some(re => re.test(name));
+}
+
+function matchesAiCommitter(name, email) {
+  if (!name) return false;
+  if (isCiBot(name)) return false;            // CI-боты исключаем ДО любых других проверок
+  if (AI_BOT_NAME_PATTERNS.some(re => re.test(name))) {
+    // Имя в whitelist'е, но для "Claude" — нужна email-подтверждение
+    for (const { name: nre, mustEmail } of AI_NAME_NEEDS_EMAIL) {
+      if (nre.test(name)) return mustEmail.test(email || '');
+    }
+    return true;  // имя из bot-whitelist'а и не требует email-подтверждения
+  }
+  return false;
+}
 
 // AI-агенты оставляют следы в теле коммита. Это самый сильный, почти
 // детерминированный сигнал: noreply@anthropic.com, cursor@cursor.com,
@@ -43,21 +88,29 @@ const AI_TRAILER_PATTERNS = [
 function extractAiTrailerInfo(commits) {
   const names = new Set();
   let hits = 0;
-  for (const c of commits) {
+  let scaffoldHits = 0;  // 🤖 Generated with — отдельный счётчик
+  let scaffoldInOldestCommit = false;
+  for (let i = 0; i < commits.length; i++) {
+    const c = commits[i];
     const msg = c.commit?.message || '';
     if (!AI_TRAILER_PATTERNS.some(re => re.test(msg))) continue;
     hits++;
-    // достаём имя из Co-Authored-By: NAME <email>
+    const isScaffold = /🤖\s*generated\s+with/i.test(msg) || /generated\s+with\s+\[?claude\s+code/i.test(msg);
+    if (isScaffold) {
+      scaffoldHits++;
+      // Если scaffold marker в самом старом из выбранных коммитов (commits[-1] хронологически)
+      if (i === commits.length - 1) scaffoldInOldestCommit = true;
+    }
     const m = msg.match(/co-?authored-?by:\s*([^<\n]+?)\s*</i);
     if (m) {
       names.add(m[1].trim());
-    } else if (/🤖\s*generated\s+with/i.test(msg) || /generated\s+with\s+\[?claude\s+code/i.test(msg)) {
+    } else if (isScaffold) {
       names.add('Claude Code marker');
     } else if (/\bcursor:\s*(generated|edited)\b/i.test(msg)) {
       names.add('Cursor signature');
     }
   }
-  return { hits, names };
+  return { hits, names, scaffoldHits, scaffoldInOldestCommit };
 }
 
 const CONVENTIONAL_COMMIT = /^(feat|fix|chore|docs|refactor|test|build|ci|perf|style)(\([^)]+\))?:\s+/;
@@ -70,15 +123,21 @@ export const commitRules = [
     score(ctx) {
       const commits = ctx.commits || [];
       if (!commits.length) return 0;
-      const { hits } = extractAiTrailerInfo(commits);
+      const { hits, scaffoldHits, scaffoldInOldestCommit } = extractAiTrailerInfo(commits);
       ctx._aiTrailerHits = hits;
       const ratio = hits / commits.length;
-      // >50% — агент пишет код, по факту "AI авторство"
-      // 30-50% — агент-ассистент пишет половину
-      // 15-30% — лёгкая агент-помощь (figma/mcp-server-guide ≈ 20%)
-      // <15% — единичные касания (норма для современных команд)
+
+      // Scaffold marker (🤖 Generated with Claude Code) В САМОМ СТАРОМ коммите —
+      // это значит проект был сгенерирован агентом с нуля. Даже если потом
+      // человек дописывал, AI авторство кода зафиксировано.
+      if (scaffoldInOldestCommit) return Math.max(0.85, ratio >= 0.5 ? 1 : 0.85);
+
+      // Любой scaffold-marker — сильнее обычного co-author trailer
+      if (scaffoldHits > 0 && ratio < 0.3) return Math.max(0.55, ratio);
+
+      // Обычная пропорция Co-Authored-By
       if (ratio >= 0.5) return 1;
-      if (ratio >= 0.3) return 0.7;
+      if (ratio >= 0.3) return 0.75;  // подняли с 0.7 — moonshine кейс
       if (ratio >= 0.15) return 0.35;
       if (ratio > 0)    return 0.15;
       return 0;
@@ -96,53 +155,76 @@ export const commitRules = [
 
   {
     id: 'vibe_coded_few_commits',
-    weight: 2.0,  // сильный сигнал, когда нет trailers (squashed history, ручной перенос кода и т.п.)
-    description: '1-3 коммита на проект с заметным объёмом кода',
+    weight: 2.0,
+    description: '1-10 коммитов на проект с заметным объёмом кода (с поправкой на squash-merge и заброшенность)',
     score(ctx) {
       const commits = ctx.commits || [];
       const sizeKB = ctx.repo?.size || 0;
       const ageDays = ctx.repoAgeDays;
       const commitCount = ctx.totalCommits ?? commits.length;
+      const prCount = ctx.pullRequestsCount || 0;
+      const stars = ctx.repo?.stargazers_count || 0;
 
       if (commitCount === 0) return 0;
 
-      // AI vibe-coding обычно свежее. Старый репо с 1 коммитом — чаще
-      // forked-копия, archive, или просто заброшенный legit-репо.
+      // Counter-signal: squash-merge команды могут иметь мало коммитов в main,
+      // но много PRs. Это НЕ vibe-coding — это нормальный workflow.
+      const isSquashMerge = (prCount >= 20 && commitCount <= 10) || (prCount >= commitCount * 5 && commitCount >= 2);
+
+      // "Abandoned vibe": few commits + no PRs + few stars = классический "vibe-coded и забыл".
+      // Возраст в этом случае не должен спасать — это и есть AI scaffolding.
+      const isAbandonedVibe = commitCount <= 10 && prCount <= 2 && stars < 10;
+
       let ageFactor = 1.0;
-      if (ageDays > 180) ageFactor = 0.45;
-      else if (ageDays > 120) ageFactor = 0.65;
-      else if (ageDays > 60) ageFactor = 0.85;
+      if (!isAbandonedVibe) {
+        if (ageDays > 180) ageFactor = 0.45;
+        else if (ageDays > 120) ageFactor = 0.65;
+        else if (ageDays > 60) ageFactor = 0.85;
+      } else if (ageDays > 3 * 365) {
+        // Совсем древний repo даже с признаками vibe — скорее archive
+        ageFactor = 0.5;
+      }
+      // Иначе ageFactor = 1.0 (не давим)
 
       let base = 0;
       if (commitCount <= 2 && sizeKB > 20) base = 1.0;
       else if (commitCount <= 3 && sizeKB > 50) base = 0.9;
-      else if (commitCount <= 5 && sizeKB > 100) base = 0.7;
-      else if (commitCount <= 5 && sizeKB > 30)  base = 0.55;  // SDK / небольшая утилита
-      else if (commitCount <= 8 && sizeKB > 80)  base = 0.45;
+      else if (commitCount <= 5 && sizeKB > 100) base = 0.8;
+      else if (commitCount <= 5 && sizeKB > 20)  base = 0.65;  // synapsea-auth-react: 5 commits 27KB
+      else if (commitCount <= 7 && sizeKB > 30)  base = 0.55;  // gha-version-check: 6 commits 40KB
+      else if (commitCount <= 10 && sizeKB > 50) base = 0.4;
       else if (commitCount <= 2 && ageDays > 30 && sizeKB > 10) base = 0.85;
 
-      return base * ageFactor;
+      let score = base * ageFactor;
+      if (isSquashMerge) score *= 0.25;
+      return score;
     },
     reason: (ctx) => {
       const n = ctx.totalCommits ?? (ctx.commits || []).length;
       const ageDays = ctx.repoAgeDays;
-      const decay = ageDays > 180 ? ' (затухание ×0.45 из-за возраста)' :
-                    ageDays > 120 ? ' (затухание ×0.65)' :
-                    ageDays > 60  ? ' (затухание ×0.85)' : '';
-      return `${n} коммит(ов) на ${ctx.repo?.size || 0}KB, возраст ${ageDays}д${decay}`;
+      const prCount = ctx.pullRequestsCount || 0;
+      const stars = ctx.repo?.stargazers_count || 0;
+      const isSquashMerge = (prCount >= 20 && n <= 10) || (prCount >= n * 5 && n >= 2);
+      const isAbandonedVibe = n <= 10 && prCount <= 2 && stars < 10;
+      const parts = [`${n} коммит(ов) на ${ctx.repo?.size || 0}KB, возраст ${ageDays}д`];
+      if (isAbandonedVibe) parts.push(`abandoned vibe (PRs:${prCount}, ★${stars}) — age decay снят`);
+      else if (ageDays > 180) parts.push('возрастной decay');
+      if (isSquashMerge) parts.push(`squash-merge counter (${prCount} PRs)`);
+      return parts.join(', ');
     },
   },
 
   {
     id: 'ai_committer',
-    weight: 1.8,  // когда сам commit.author = бот (squash-мерж от автоматики, force-push от агента)
-    description: 'Имя коммиттера выдаёт AI-инструмент',
+    weight: 1.8,
+    description: 'commit.author = AI-агент (Copilot, Cursor-bot, Claude с anthropic-email, …) — НЕ ловит CI-ботов',
     score(ctx) {
       const commits = ctx.commits || [];
       if (!commits.length) return 0;
       const aiCommits = commits.filter(c => {
-        const name = c.commit?.author?.name || c.commit?.committer?.name || '';
-        return AI_COMMITTER_PATTERNS.some(re => re.test(name));
+        const name  = c.commit?.author?.name  || c.commit?.committer?.name  || '';
+        const email = c.commit?.author?.email || c.commit?.committer?.email || '';
+        return matchesAiCommitter(name, email);
       });
       return Math.min(1, aiCommits.length / commits.length);
     },
@@ -150,8 +232,9 @@ export const commitRules = [
       const commits = ctx.commits || [];
       const aiAuthors = new Set();
       for (const c of commits) {
-        const name = c.commit?.author?.name || c.commit?.committer?.name || '';
-        if (AI_COMMITTER_PATTERNS.some(re => re.test(name))) aiAuthors.add(name);
+        const name  = c.commit?.author?.name  || c.commit?.committer?.name  || '';
+        const email = c.commit?.author?.email || c.commit?.committer?.email || '';
+        if (matchesAiCommitter(name, email)) aiAuthors.add(name);
       }
       return aiAuthors.size ? `AI-коммиттеры: ${[...aiAuthors].join(', ')}` : '';
     },
@@ -233,7 +316,7 @@ export const commitRules = [
 
   {
     id: 'massive_initial_commit',
-    weight: 0.8,
+    weight: 1.0,  // подняли с 0.8: 5000+ строк в первом коммите — почти всегда AI scaffold
     description: 'Огромный initial commit ("feat: initial implementation")',
     score(ctx) {
       const commits = ctx.commits || [];
@@ -254,6 +337,67 @@ export const commitRules = [
       const first = commits[commits.length - 1];
       const adds = first?.stats?.additions || 0;
       return adds ? `Initial commit: +${adds} строк` : '';
+    },
+  },
+
+  {
+    id: 'scaffold_initial_message',
+    weight: 1.4,  // AI-стиль initial-сообщения — очень характерный паттерн
+    description: 'Initial commit оформлен как presentational changelog (multi-line + Features bullets)',
+    score(ctx) {
+      const commits = ctx.commits || [];
+      if (commits.length === 0) return 0;
+      // Берём самый старый из выбранных коммитов
+      const oldest = commits[commits.length - 1];
+      const msg = oldest.commit?.message || '';
+      const lines = msg.split('\n');
+      if (lines.length < 3) return 0;
+
+      // Признаки AI-структуры:
+      // 1. Первая строка содержит описательный заголовок (>20 символов), не "Initial commit"
+      // 2. После пустой строки идёт раздел "Features:" / "Highlights:" / "Capabilities:"
+      // 3. ИЛИ bullet-список с "- " / "* " в 3+ строках подряд
+      const firstLine = lines[0];
+      const hasDescriptiveTitle = firstLine.length > 25 &&
+        !/^(initial|init|first|wip|test|setup|start)\s*(commit)?$/i.test(firstLine.trim());
+
+      const hasFeaturesSection = /^\s*(features?|highlights?|capabilities|includes|what'?s included|overview)\s*:?\s*$/im.test(msg);
+
+      // Подсчёт consecutive bullet-lines
+      let maxBulletRun = 0, currentRun = 0;
+      for (const l of lines) {
+        if (/^\s*[-*]\s+\w/.test(l)) {
+          currentRun++;
+          maxBulletRun = Math.max(maxBulletRun, currentRun);
+        } else if (l.trim() === '') {
+          // пустая не сбрасывает строго, но и не накапливает
+        } else {
+          currentRun = 0;
+        }
+      }
+      const hasBulletList = maxBulletRun >= 3;
+
+      let score = 0;
+      if (hasDescriptiveTitle && hasFeaturesSection && hasBulletList) score = 1.0;
+      else if (hasDescriptiveTitle && hasBulletList) score = 0.75;
+      else if (hasFeaturesSection && hasBulletList) score = 0.65;
+      else if (hasDescriptiveTitle && lines.length >= 5) score = 0.3;
+      return score;
+    },
+    reason(ctx) {
+      const commits = ctx.commits || [];
+      if (!commits.length) return '';
+      const oldest = commits[commits.length - 1];
+      const msg = oldest.commit?.message || '';
+      const lines = msg.split('\n');
+      if (lines.length < 3) return '';
+      const firstLine = lines[0].slice(0, 60);
+      const hasFeatures = /^\s*(features?|highlights?|capabilities)\s*:?\s*$/im.test(msg);
+      const bullets = lines.filter(l => /^\s*[-*]\s+\w/.test(l)).length;
+      const tags = [];
+      if (hasFeatures) tags.push('"Features:" section');
+      if (bullets >= 3) tags.push(`${bullets} bullets`);
+      return tags.length ? `Initial: "${firstLine}…" — ${tags.join(', ')}` : '';
     },
   },
 ];
